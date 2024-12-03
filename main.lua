@@ -4,8 +4,6 @@ plugin.debug = true
 plugin.modules.as = true
 plugin:install()
 
-require("tests.types")
-
 -- Lua test suite
 require("tests.external.z")
 

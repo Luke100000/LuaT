@@ -236,9 +236,9 @@ local function replaceInlineTypes(text, mask, syntaxOnly)
 
                     -- Replace with names only
                     table.insert(diffs, {
-                        start  = typeStart,
+                        start  = typeStart + 1,
                         finish = typeEnd - 1,
-                        text   = table.concat(names, ", "),
+                        text   = table.concat(names, ", "):sub(2),
                     })
                 end
             end
@@ -256,8 +256,8 @@ end
 local function replaceFunctionTypes(text, mask, syntaxOnly)
     local diffs = {}
     for _, pattern in ipairs({
-        "\n+()%s*local [%a_][%w_%.]*%s*=%s*function%s*%(()([^%(]*)%)() *([^\n]*)()",   -- Local assignment style
-        "\n+()%s*[%a_][%w_%.]*%s*=%s*function%s*%(()([^%(]*)%)() *([^\n]*)()",         -- Assignment style
+        "\n+()%s*local [%a_][%w_%.]*%s*=%s*function%s*%(()([^%(]*)%)() *([^\n]*)()", -- Local assignment style
+        "\n+()%s*[%a_][%w_%.]*%s*=%s*function%s*%(()([^%(]*)%)() *([^\n]*)()",       -- Assignment style
         "\n+()[^\n]*function%s*[%a_][%w_%.]*%s*%(()([^%(]*)%)() *([^\n]*)()",        -- Function style
     }) do
         for lineStart, argumentsStart, argumentsString, returnTypeStart, returnString, typeEnd in tGmatch(text, pattern, "number", "number", "string", "number", "string", "number") do
@@ -434,18 +434,24 @@ end
 local oldRequire = require
 
 ---Applies the diffs to the content
----@param content string
+---@param text string
 ---@param diffs diff[]
 ---@return string
-function plugin:apply(content, diffs)
+function plugin:apply(text, diffs)
     table.sort(diffs, function(a, b)
-        return a.finish > b.finish
+        return a.start < b.start
     end)
+    local cur = 1
+    local buf = {}
+    local delta = 0
     for _, diff in ipairs(diffs) do
-        ---@diagnostic disable-next-line: no-unknown
-        content = content:sub(1, diff.start - 1) .. diff.text .. content:sub(diff.finish + 1)
+        table.insert(buf, text:sub(cur, diff.start - 1))
+        table.insert(buf, diff.text)
+        cur   = diff.finish + 1
+        delta = delta + #diff.text - (diff.finish - diff.start + 1)
     end
-    return content
+    table.insert(buf, text:sub(cur))
+    return table.concat(buf)
 end
 
 ---Transform and require a file
@@ -465,22 +471,19 @@ function plugin:require(path)
 
                 -- Save a copy for debugging
                 if self.debug and love then
-                    self.print(("Transforming %s with %d diffs in %d ms"):format(p, #diffs, math.floor((clock() - t) * 1000)))
+                    self.print(("Transforming %s with %d diffs in %d ms"):format(p, #diffs,
+                        math.floor((clock() - t) * 1000)))
                     love.filesystem.createDirectory("parsed")
                     love.filesystem.write("parsed/" .. path .. ".lua", content)
                 end
 
                 local ok, msg = load(content)
                 if ok then
-                    ---@type boolean, table
-                    local success, module = pcall(ok)
-                    if success then
-                        ---@diagnostic disable-next-line: no-unknown
-                        package.loaded[path] = module
-                        return package.loaded[path]
-                    else
-                        self.print("Error loading " .. p .. ": " .. module)
-                    end
+                    ---@type any
+                    local module = ok()
+                    ---@diagnostic disable-next-line: no-unknown
+                    package.loaded[path] = module
+                    return package.loaded[path]
                 else
                     self.print("Error parsing " .. p .. ": " .. msg)
                 end
