@@ -1,22 +1,20 @@
 {
-  "Lua.misc.parameters": ["--develop=true"],
-  "Lua.runtime.plugin": "plugin.lua",
-  "Lua.runtime.pluginArgs": [],
-  "Lua.runtime.version": "LuaJIT",
+  "misc.parameters": ["--develop=true"],
+  "runtime.plugin": "plugin.lua",
+  "runtime.pluginArgs": [],
+  "runtime.version": "LuaJIT",
   "editor.defaultFormatter": "esbenp.prettier-vscode",
   "[lua]": {
     "editor.defaultFormatter": "sumneko.lua"
   },
   "editor.inlineSuggest.enabled": true,
-  "Lua.runtime.special": {
+  "runtime.special": {
     "love.filesystem.load": "loadfile"
   },
-  "Lua.workspace.library": ["${3rd}/love2d/library"],
-  "Lua.completion.autoRequire": false,
-  "todo-tree.tree.showBadges": true,
-  "todo-tree.tree.disableCompactFolders": false,
-  "Lua.diagnostics.globals": ["set", "require"],
-  "Lua.diagnostics.neededFileStatus": {
+  "workspace.library": ["${3rd}/love2d/library"],
+  "completion.autoRequire": false,
+  "diagnostics.globals": ["require"],
+  "diagnostics.neededFileStatus": {
     "ambiguity-1": "Any",
     "assign-type-mismatch": "Any",
     "await-in-sync": "Any",
