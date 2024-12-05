@@ -10,13 +10,13 @@ Call the lua module at runtime to enable the code parser. This is required to
 ignore the extra typing syntax.
 
 ```lua
-require("LuaT"):install()
+require("plugin"):install()
 ```
 
 Or require files explicitely:
 
 ```lua
-local plugin = require("LuaT")
+local plugin = require("plugin")
 local yourModule = plugin:require("path")
 ```
 

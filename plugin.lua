@@ -83,6 +83,32 @@ local function tGmatch(text, pattern, t1, t2, t3, t4, t5, t6, t7, t8, t9)
     return string.gmatch(text, pattern)
 end
 
+---@param typeStr string
+---@return string
+local function removeTypeComment(typeStr)
+    if typeStr:sub(1, 5) == "fun()" then
+        return typeStr
+    end
+
+    local openCurlies = 0
+    local openBrackets = 0
+    for i = 1, #typeStr do
+        local c = typeStr:sub(i, i)
+        if c == "{" then
+            openCurlies = openCurlies + 1
+        elseif c == "}" then
+            openCurlies = openCurlies - 1
+        elseif c == "[" then
+            openBrackets = openBrackets + 1
+        elseif c == "]" then
+            openBrackets = openBrackets - 1
+        elseif c == " " and openCurlies <= 0 and openBrackets <= 0 then
+            return string.sub(typeStr, 1, i - 1)
+        end
+    end
+    return typeStr
+end
+
 ---@param input string
 ---@return diff[]
 local function injectFunctionDefinitions(input)
@@ -105,24 +131,22 @@ local function injectFunctionDefinitions(input)
             if trimmedLine:sub(1, 9) == "---@param" then
                 state.valid = true
 
-                local param = trimmedLine:sub(11)
-                ---@type string, string
-                local name, typeStr
-                if param:find("{") or param:find("<") or param:find(":") then
-                    name = param:match("^([^%s]*)")
-                    typeStr = "any"
-                else
-                    name, typeStr = param:match("^([^%s]*)%s*([^%s]*)%s*(.*)")
+                ---@type string | nil, string | nil, string | nil
+                local name, isOptional, typeStr = string.match(trimmedLine:sub(11),
+                    "%s*(%.?%.?%.?[%a_]?[%w_]*)(%??) *([^#\n]*)")
+                typeStr = removeTypeComment(typeStr or "nil")
+                if isOptional == "?" then
+                    typeStr = typeStr .. " | nil"
                 end
 
                 table.insert(state.params, {
                     name or ("arg" .. #state.params),
-                    typeStr or "any",
+                    typeStr,
                 })
             elseif trimmedLine:sub(1, 10) == "---@return" then
                 state.valid = true
-                local f = split(trimmedLine, " ")
-                table.insert(state.returnTypes, f[2] or "nil")
+                local typeStr = string.match(trimmedLine:sub(11), "%s*([^#\n]*)") or "nil"
+                table.insert(state.returnTypes, removeTypeComment(typeStr))
             elseif trimmedLine:sub(1, 9) == "---@class" then
                 local c = split(trimmedLine:sub(11):gsub("%(exact%) ", ""), ":")
                 lastClass = trim(c[1] or "global")
@@ -133,7 +157,7 @@ local function injectFunctionDefinitions(input)
             elseif trimmedLine:sub(1, 3) == "---" then
                 state.valid = true
             end
-        elseif line:find("function *%(") and line:find(":") then
+        elseif line:find("function *[%a_][%w_]*%:[%a_][%w_]* *%(") then
             local method = line:sub(
                 (line:find(":") or 0) + 1,
                 (line:find("%(") or 0) - 1
@@ -197,7 +221,6 @@ local function injectFunctionDefinitions(input)
     return diffs
 end
 
-
 ---Replaces inline type definitions with LuaDoc type definitions
 ---@param text string
 ---@param mask table<number, boolean>
@@ -258,7 +281,7 @@ local function replaceFunctionTypes(text, mask, syntaxOnly)
     for _, pattern in ipairs({
         "\n+()%s*local [%a_][%w_%.]*%s*=%s*function%s*%(()([^%(]*)%)() *([^\n]*)()", -- Local assignment style
         "\n+()%s*[%a_][%w_%.]*%s*=%s*function%s*%(()([^%(]*)%)() *([^\n]*)()",       -- Assignment style
-        "\n+()[^\n]*function%s*[%a_][%w_%.]*%s*%(()([^%(]*)%)() *([^\n]*)()",        -- Function style
+        "\n+()[^\n]*function%s*[%a_][%w_%.%:]*%s*%(()([^%(]*)%)() *([^\n]*)()",      -- Function style
     }) do
         for lineStart, argumentsStart, argumentsString, returnTypeStart, returnString, typeEnd in tGmatch(text, pattern, "number", "number", "string", "number", "string", "number") do
             if not mask[argumentsStart] and (#returnString == 0 or returnString:sub(1, 1) == ":") then
