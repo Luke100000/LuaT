@@ -83,9 +83,11 @@ local function tGmatch(text, pattern, t1, t2, t3, t4, t5, t6, t7, t8, t9)
     return string.gmatch(text, pattern)
 end
 
+---Removes the type or additional types
 ---@param typeStr string
 ---@return string
 local function removeTypeComment(typeStr)
+    typeStr = trim(typeStr)
     if typeStr:sub(1, 5) == "fun()" then
         return typeStr
     end
@@ -102,7 +104,7 @@ local function removeTypeComment(typeStr)
             openBrackets = openBrackets + 1
         elseif c == "]" then
             openBrackets = openBrackets - 1
-        elseif c == " " and openCurlies <= 0 and openBrackets <= 0 then
+        elseif (c == " " or c == ",") and openCurlies <= 0 and openBrackets <= 0 then
             return string.sub(typeStr, 1, i - 1)
         end
     end
@@ -150,7 +152,7 @@ local function injectFunctionDefinitions(input)
             elseif trimmedLine:sub(1, 9) == "---@class" then
                 local c = split(trimmedLine:sub(11):gsub("%(exact%) ", ""), ":")
                 lastClass = trim(c[1] or "global")
-                lastParentClass = trim(c[2] or "global")
+                lastParentClass = removeTypeComment(c[2] or "global")
                 classConstructorOverrides[lastClass] = cursor + #line + 1
             elseif trimmedLine:sub(1) == "---@override" then
                 override = { cursor + commentStart, cursor + #line }
@@ -176,6 +178,11 @@ local function injectFunctionDefinitions(input)
                     start  = cd + 1,
                     finish = cd,
                     text   = "---@overload fun(" .. table.concat(parts, ",") .. "): " .. lastClass .. "\n",
+                })
+                table.insert(diffs, {
+                    start  = cd + 1,
+                    finish = cd,
+                    text   = "---@field super fun(self: " .. lastClass .. "):" .. lastParentClass .. "\n",
                 })
             end
 

@@ -156,17 +156,20 @@ This may cause unexpected behavior if a contain stateful expressions.
 
 Subexpressions such as within function calls are not supported.
 
-### Constructors
+### Constructors and Super
 
 This is a very specific injection for my class library:
 
 ```lua
----@class (exact) A
+---@class (exact) A : Parent
 ---@field param number
 local A = ... -- Class library logic
 
 ---@param param number Comment
 function A:init(param)
+    --Super() now points to Parent
+    self:super().init(self, param)
+    
     self.param = param
 end
 
