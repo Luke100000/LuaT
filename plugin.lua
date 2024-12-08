@@ -83,20 +83,35 @@ local function tGmatch(text, pattern, t1, t2, t3, t4, t5, t6, t7, t8, t9)
     return string.gmatch(text, pattern)
 end
 
----Removes the type or additional types
----@param typeStr string
+---Returns the type and its start position
+---@param rawTypeStr string
 ---@return string
-local function removeTypeComment(typeStr)
-    typeStr = trim(typeStr)
+---@return integer
+local function getType(rawTypeStr)
+    local typeStr = trim(rawTypeStr)
+    local offset = #rawTypeStr - #typeStr
+
+    -- Functions are more tricky, only accept # as comment indicator
     if typeStr:sub(1, 5) == "fun()" then
-        return typeStr
+        local commentStart = typeStr:find("#")
+        if commentStart then
+            return string.sub(typeStr, 1, commentStart - 1), commentStart
+        else
+            return typeStr, offset + #typeStr
+        end
     end
 
+    local openParentheses = 0
     local openCurlies = 0
     local openBrackets = 0
+    local openAngleBrackets = 0
     for i = 1, #typeStr do
         local c = typeStr:sub(i, i)
-        if c == "{" then
+        if c == "(" then
+            openParentheses = openParentheses + 1
+        elseif c == ")" then
+            openParentheses = openParentheses - 1
+        elseif c == "{" then
             openCurlies = openCurlies + 1
         elseif c == "}" then
             openCurlies = openCurlies - 1
@@ -104,11 +119,17 @@ local function removeTypeComment(typeStr)
             openBrackets = openBrackets + 1
         elseif c == "]" then
             openBrackets = openBrackets - 1
-        elseif (c == " " or c == ",") and openCurlies <= 0 and openBrackets <= 0 then
-            return string.sub(typeStr, 1, i - 1)
+        elseif c == "<" then
+            openAngleBrackets = openAngleBrackets + 1
+        elseif c == ">" then
+            openAngleBrackets = openAngleBrackets - 1
+        elseif (c == " " or c == ",") and openParentheses == 0 and openCurlies == 0 and openBrackets == 0 and openAngleBrackets == 0 then
+            return string.sub(typeStr, 1, i - 1), offset + i
+        elseif openParentheses < 0 or openCurlies < 0 or openBrackets < 0 or openAngleBrackets < 0 then
+            return "", offset
         end
     end
-    return typeStr
+    return typeStr, offset + #typeStr
 end
 
 ---@param input string
@@ -136,7 +157,7 @@ local function injectFunctionDefinitions(input)
                 ---@type string | nil, string | nil, string | nil
                 local name, isOptional, typeStr = string.match(trimmedLine:sub(11),
                     "%s*(%.?%.?%.?[%a_]?[%w_]*)(%??) *([^#\n]*)")
-                typeStr = removeTypeComment(typeStr or "nil")
+                typeStr = getType(typeStr or "nil")
                 if isOptional == "?" then
                     typeStr = typeStr .. " | nil"
                 end
@@ -148,11 +169,12 @@ local function injectFunctionDefinitions(input)
             elseif trimmedLine:sub(1, 10) == "---@return" then
                 state.valid = true
                 local typeStr = string.match(trimmedLine:sub(11), "%s*([^#\n]*)") or "nil"
-                table.insert(state.returnTypes, removeTypeComment(typeStr))
+                local type = getType(typeStr)
+                table.insert(state.returnTypes, type)
             elseif trimmedLine:sub(1, 9) == "---@class" then
                 local c = split(trimmedLine:sub(11):gsub("%(exact%) ", ""), ":")
                 lastClass = trim(c[1] or "global")
-                lastParentClass = removeTypeComment(c[2] or "global")
+                lastParentClass = getType(c[2] or "global")
                 classConstructorOverrides[lastClass] = cursor + #line + 1
             elseif trimmedLine:sub(1) == "---@override" then
                 override = { cursor + commentStart, cursor + #line }
@@ -235,43 +257,71 @@ end
 ---@return diff[] | nil
 local function replaceInlineTypes(text, mask, syntaxOnly)
     local diffs = {}
-    for _, pattern in ipairs({
-        "\n+()%s*()([%a_][%w_%:%., ]*[^%-%+%*%%/~])()="
-    }) do
-        for lineStart, typeStart, typesString, typeEnd in tGmatch(text, pattern, "number", "number", "string", "number") do
-            if not mask[typeStart] then
-                local parsedTypes = {}
-                local names = {}
-                for _, pair in ipairs(split(typesString, ",")) do
-                    local v = split(pair, ":")
-                    if #v == 2 then
-                        table.insert(names, trim(v[1]))
-                        table.insert(parsedTypes, trim(v[2]))
-                    else
-                        -- Assignment does not use types
-                        names = nil
-                        break
-                    end
+
+    -- For locals, several variables separated by comma are allowed
+    local localPattern = "\n+()%s*local%s+()([%a_][^:\n;=]*:[^\n;=]*)()"
+    for lineStart, typeStart, typesString, typeEnd in tGmatch(text, localPattern, "number", "number", "string", "number") do
+        if not mask[typeStart] then
+            local parsedTypes = {}
+            local names = {}
+
+            while true do
+                local name
+                name, typesString = typesString:match("^%s*([%a_][%w_]*)%s*:%s(.*)")
+                if not name or #typesString == 0 then
+                    break
                 end
+                local type, endPos = getType(typesString)
+                if #type == 0 then
+                    -- Malformed, line is probably a false positive
+                    names = nil
+                    break
+                end
+                ---@type string
+                typesString = typesString:sub(endPos):match("^%s*[,]?%s*(.*)")
+                table.insert(names, name)
+                table.insert(parsedTypes, trim(type))
+            end
 
-                if names then
-                    -- Add LuaDoc type
-                    if not syntaxOnly then
-                        table.insert(diffs, {
-                            start  = lineStart,
-                            finish = lineStart - 1,
-                            text   = "---@type " .. table.concat(parsedTypes, ", ") .. "\n",
-                        })
-                    end
-
-                    -- Replace with names only
+            if names and #names > 0 then
+                -- Add LuaDoc type
+                if not syntaxOnly then
                     table.insert(diffs, {
-                        start  = typeStart + 1,
-                        finish = typeEnd - 1,
-                        text   = table.concat(names, ", "):sub(2),
+                        start  = lineStart,
+                        finish = lineStart - 1,
+                        text   = "---@type " .. table.concat(parsedTypes, ", ") .. "\n",
                     })
                 end
+
+                -- Replace with names only
+                table.insert(diffs, {
+                    start  = typeStart + 1,
+                    finish = typeEnd - 1,
+                    text   = table.concat(names, ", "):sub(2),
+                })
             end
+        end
+    end
+
+    -- For fields, only a name.:field: type is allowed
+    local fieldPattern = "\n+()%s*[%a_][%w_]*%s*[%.:]%s*[%a_][%w_]*()%s*:%s*([^\n;=]*)()[^%.%+%-%*/%^%%]="
+    for lineStart, typeStart, typesString, typeEnd in tGmatch(text, fieldPattern, "number", "number", "string", "number") do
+        if not mask[typeStart] then
+            -- Add LuaDoc type
+            if not syntaxOnly then
+                table.insert(diffs, {
+                    start  = lineStart,
+                    finish = lineStart - 1,
+                    text   = "---@type " .. typesString .. "\n",
+                })
+            end
+
+            -- Replace with name only
+            table.insert(diffs, {
+                start  = typeStart,
+                finish = typeEnd - 1,
+                text   = "",
+            })
         end
     end
 
