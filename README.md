@@ -52,7 +52,7 @@ Types can now be declared similar to TypeScript using colon:
 local variable: string = ""
 local first: string, second: string = "", ""
 
-function func(param1: string, param2: number) : nil
+function func(param1: string, param2: number) : number
 
 end
 
@@ -62,7 +62,8 @@ object.foo: number = 42
 Which gets resolved to their respective `---@param`, `---@type`, and
 `---@return`'s.
 
-To avoid false detections, only locals and non-nested dot notation is supported.
+To avoid false detections, only locals and non-nested, single assignment dot
+notation is supported.
 
 Globals are not supported (you should not use many anyway), and neither are
 nested definitions (`a.b.c`) or table indexing `a["b"]`.
@@ -71,41 +72,25 @@ You can also mix declaration types, e.g.; to add description to certain fields:
 
 ```lua
 ---@param param2 string This is fancy description
-function Func(param1: string, param2) : number, number
+function Func(param1: string, param2) : (number, number)
     return 1, 2
 end
 ```
 
-### Fancy casts
+To stay compliant with LuaU (e.g., to allow code highlighter and formatter to
+work), following types are converted:
 
-_Unreliable, disabled by default._
+- Arrays like `{{ number }}` are converted to `number[][]`
+  - This does not extend well to nested or complex types for the sake of
+    simplicity. Use classic LuaCATS in such scenarious.
+- Functions like `(a: number) -> (string)` gets converted to
+  `fun(a: number) : (string)`
 
-```lua
-value as type
-```
+However support ends with:
 
-now gets resolved to
-
-```lua
-value ---[[@as type]]
-```
-
-To skip false positives, only following syntaxes are supported:
-
-- Any type declaration except function types followed by `,`, `)`, `]`, `}`, or
-  `do \n`
-  - If the type contains spaces, the entire type must be encaplulated by
-    parantheses `(<type>)`
-- A Function type in parantheses followed by `do \n`
-  - This covers the common case of casting iterators to ensure iterator
-    variables are typed.
-
-```lua
--- Casting the gmatch iterator to type its iterator variables.
-for a, b in string.gmatch("hello world", "()hello()") as (fun() : number, number) do
-    print(a, b)
-end
-```
+- Tuples are not supported and must be written as dict (or LuaCATS, or
+  alias/type)
+- Field definitions are not supported (use ---@field or LuaCATS)
 
 ### Overriding methodes
 
@@ -169,7 +154,7 @@ local A = ... -- Class library logic
 function A:init(param)
     --Super() now points to Parent
     self:super().init(self, param)
-    
+
     self.param = param
 end
 

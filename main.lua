@@ -8,7 +8,6 @@ plugin:install()
 require("tests.external.z")
 
 -- Own test suite
-require("tests.as")
 require("tests.class")
 require("tests.constructor")
 require("tests.operators")

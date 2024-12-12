@@ -8,8 +8,7 @@ local A = setmetatable({}, {
     end
 })
 
----@param param number Comment
-function A:init(param)
+function A:init(param: number)
     self.param = param
 end
 
