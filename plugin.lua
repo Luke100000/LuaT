@@ -1,3 +1,4 @@
+---@diagnostic disable: no-unknown
 ---@class LuaTLibrary
 local plugin = {
 	print = print,
@@ -6,6 +7,7 @@ local plugin = {
 		defs = true,
 		operators = true,
 		types = true,
+		fieldTypes = false,
 	},
 }
 
@@ -109,9 +111,7 @@ end
 
 ---Returns the type and the rest (which could be another type, comment, or malformed input)
 ---@param typeStr string
----@return string
----@return string
----@return integer
+---@return string, string, integer
 function getType(typeStr)
 	local valid = false
 	typeStr = typeStr
@@ -139,6 +139,7 @@ function getType(typeStr)
 			and openBrackets == 0
 			and openAngleBrackets == 0
 		then
+			---@diagnostic disable-next-line: redundant-return-value
 			return LuaUtoLuaT(trim(typeStr:sub(1, i - 1))), typeStr:sub(i), i
 		elseif c == "(" then
 			openParentheses = openParentheses + 1
@@ -167,12 +168,14 @@ function getType(typeStr)
 				valid = false
 			end
 		elseif openParentheses < 0 or openCurlies < 0 or openBrackets < 0 or openAngleBrackets < 0 then
+			---@diagnostic disable-next-line: redundant-return-value
 			return "", typeStr, i
 		elseif c ~= " " then
 			valid = true
 		end
 	end
 
+	---@diagnostic disable-next-line: redundant-return-value
 	return "", typeStr, 0
 end
 
@@ -251,16 +254,20 @@ local function injectFunctionDefinitions(input, resolvedTypes)
 					end
 				end
 
+				---[[ Requires https://github.com/LuaLS/lua-language-server/issues/2978 to be resolved
 				table.insert(diffs, {
 					start = cd + 1,
 					finish = cd,
 					text = "---@overload fun(" .. table.concat(parts, ",") .. "): " .. lastClass .. "\n",
 				})
-				table.insert(diffs, {
-					start = cd + 1,
-					finish = cd,
-					text = "---@field super fun(self: " .. lastClass .. "):" .. lastParentClass .. "\n",
-				})
+				--]]
+				if lastParentClass ~= "global" then
+					table.insert(diffs, {
+						start = cd + 1,
+						finish = cd,
+						text = "---@field super fun(self: " .. lastClass .. "):" .. lastParentClass .. "\n",
+					})
+				end
 			end
 
 			if override then
@@ -321,7 +328,7 @@ local function replaceInlineTypes(text, mask, syntaxOnly)
 	-- For locals, several variables separated by comma are allowed
 	local localPattern = "\n+()%s*local%s+()([%a_][^:\n;=]*:[^\n;=]*)()"
 	for lineStart, typeStart, typesString, typeEnd in
-		tGmatch(text, localPattern, "number", "number", "string", "number")
+	tGmatch(text, localPattern, "number", "number", "string", "number")
 	do
 		if not mask[typeStart] then
 			local parsedTypes = {}
@@ -346,7 +353,7 @@ local function replaceInlineTypes(text, mask, syntaxOnly)
 				typesString = typesString:sub(2)
 			end
 
-			if names and #names > 0 then
+			if #parsedTypes > 0 then
 				-- Add LuaDoc type
 				if not syntaxOnly then
 					table.insert(diffs, {
@@ -366,10 +373,21 @@ local function replaceInlineTypes(text, mask, syntaxOnly)
 		end
 	end
 
+	return diffs
+end
+
+---Replaces inline field type definitions with LuaDoc type definitions
+---@param text string
+---@param mask table<number, boolean>
+---@param syntaxOnly boolean
+---@return diff[] | nil
+local function replaceInlineFieldTypes(text, mask, syntaxOnly)
+	local diffs = {}
+
 	-- For fields, only a name.:field: type is allowed
 	local fieldPattern = "\n+()%s*[%a_][%w_]*%s*[%.:]%s*[%a_][%w_]*()%s*:%s*([^\n;=]*)()[^%.%+%-%*/%^%%]="
 	for lineStart, typeStart, typesString, typeEnd in
-		tGmatch(text, fieldPattern, "number", "number", "string", "number")
+	tGmatch(text, fieldPattern, "number", "number", "string", "number")
 	do
 		if not mask[typeStart] then
 			-- Add LuaDoc type
@@ -407,7 +425,7 @@ local function replaceFunctionTypes(text, mask, syntaxOnly, resolvedTypes)
 		"\n+()[^\n]*function%s*[%a_][%w_%.%:]*%s*%(()([^%(]*)%)() *([^\n]*)()", -- Function style
 	}) do
 		for lineStart, argumentsStart, argumentsString, returnTypeStart, returnString, typeEnd in
-			tGmatch(text, pattern, "number", "number", "string", "number", "string", "number")
+		tGmatch(text, pattern, "number", "number", "string", "number", "string", "number")
 		do
 			if returnString == "end" then
 				returnString = ""
@@ -491,7 +509,7 @@ local function replaceFunctionTypes(text, mask, syntaxOnly, resolvedTypes)
 					end
 
 					-- Remove LuaT parameter types
-					if #names > 0 then
+					if #names > 0 and #params > 0 then
 						table.insert(diffs, {
 							start = argumentsStart,
 							finish = argumentEnd - 1,
@@ -523,7 +541,7 @@ local function addOperators(text, mask)
 	local diffs = {}
 
 	for variable, operator, pos in
-		tGmatch(text, "[\n;]%s*([%a_][%w_%[%]\"']*)%s*(%.?[%.%+%-%*/%^%%])()=", "string", "string", "number")
+	tGmatch(text, "[\n;]%s*([%a_][%w_%[%]\"']*)%s*(%.?[%.%+%-%*/%^%%])()=", "string", "string", "number")
 	do
 		if not mask[pos] then
 			table.insert(diffs, {
@@ -566,6 +584,7 @@ function OnSetText(uri, text, syntaxOnly)
 	return concat(
 		plugin.modules.operators and addOperators(text, mask) or {},
 		plugin.modules.types and replaceInlineTypes(text, mask, syntaxOnly) or {},
+		plugin.modules.fieldTypes and replaceInlineFieldTypes(text, mask, syntaxOnly) or {},
 		plugin.modules.types and replaceFunctionTypes(text, mask, syntaxOnly, resolvedTypes) or {},
 		plugin.modules.defs and not syntaxOnly and injectFunctionDefinitions(text, resolvedTypes) or {}
 	)
@@ -592,7 +611,7 @@ end
 
 ---@return number
 local function clock()
-	return love and love.timer.getTime() or os.clock()
+	return love and love.timer and love.timer.getTime() or os.clock()
 end
 
 local oldRequire = require
@@ -625,7 +644,8 @@ function plugin:require(path)
 		return package.loaded[path]
 	end
 	for searchPath in tGmatch(package.path, "([^;]+)", "string") do
-		local p = searchPath:gsub("%?", path:gsub("%.", "/"))
+		local pathed = path:gsub("%.", "/")
+		local p = searchPath:gsub("%?", pathed)
 		local content = getFile(p)
 		if content then
 			local t = clock()
@@ -634,12 +654,18 @@ function plugin:require(path)
 				content = self:apply(content, diffs)
 
 				-- Save a copy for debugging
-				if self.debug and love then
+				if self.debug and love and #diffs > 0 then
+					local added, removed = 0, 0
+					for _, diff in ipairs(diffs) do
+						added = added + #diff.text
+						removed = removed + diff.finish - diff.start + 1
+					end
 					self.print(
-						("Transforming %s with %d diffs in %d ms"):format(p, #diffs, math.floor((clock() - t) * 1000))
+						("Transforming %s with %d diffs (+%d, -%d) in %d ms"):format(p, #diffs, added, removed,
+							math.floor((clock() - t) * 1000))
 					)
 					love.filesystem.createDirectory("parsed")
-					love.filesystem.write("parsed/" .. path .. ".lua", content)
+					love.filesystem.write("parsed/" .. path:gsub("/", ".") .. ".lua", content)
 				end
 
 				local ok, msg = load(content, path:gsub("%.", "/") .. ".lua")
